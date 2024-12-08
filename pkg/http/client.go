@@ -11,7 +11,11 @@ import (
 	"howett.net/plist"
 )
 
-//go:generate go run github.com/golang/mock/mockgen -source=client.go -destination=client_mock.go -package=http
+const (
+	appStoreAuthURL = "https://buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate"
+)
+
+//go:generate go run go.uber.org/mock/mockgen -source=client.go -destination=client_mock.go -package=http
 type Client[R interface{}] interface {
 	Send(request Request) (Result[R], error)
 	Do(req *http.Request) (*http.Response, error)
@@ -47,8 +51,14 @@ func (t *AddHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error
 func NewClient[R interface{}](args Args) Client[R] {
 	return &client[R]{
 		internalClient: http.Client{
-			Timeout:   0,
-			Jar:       args.CookieJar,
+			Timeout: 0,
+			Jar:     args.CookieJar,
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				if req.Referer() == appStoreAuthURL {
+					return http.ErrUseLastResponse
+				}
+				return nil
+			},
 			Transport: &AddHeaderTransport{http.DefaultTransport},
 		},
 		cookieJar: args.CookieJar,
@@ -81,6 +91,7 @@ func (c *client[R]) Send(req Request) (Result[R], error) {
 	if err != nil {
 		return Result[R]{}, fmt.Errorf("request failed: %w", err)
 	}
+	defer res.Body.Close()
 
 	err = c.cookieJar.Save()
 	if err != nil {
